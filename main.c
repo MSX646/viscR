@@ -1,6 +1,7 @@
 #include <sys/stat.h>
 #include <sys/mman.h>
 #include <elf.h>
+#include <stdlib.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -26,14 +27,14 @@ int is_sect_exec(char *file, ssize_t fsize, ssize_t entry, int len)
 	phdr_num = ehdr->e_phnum;
 	if ((ssize_t)(phdr_num * sizeof(ElfW(Phdr)) + ehdr->e_phoff) > fsize)
 	{
-		dprintf(2, "[KO] Corrupted binary\n");
+		dprintf(2, "ERROR: Corrupted binary\n");
 		return 0;
 	}
 	phdr = (void *)(file + ehdr->e_phoff);
 	index = 0;
 	if (!phdr_num)
 	{
-		dprintf(2, "[KO] There is no program header\n");
+		dprintf(2, "ERROR: There is no program header\n");
 		return (0);
 	}
 	while ((size_t)index < phdr_num)
@@ -129,7 +130,7 @@ char *open_file(char *av, ssize_t *size) {
 	return (file);
 }
 
-long	get_base_addr(FILE *fd) {
+long	get_vaddr(FILE *fd) {
 
 	ElfW(Ehdr) ehdr;
 	ElfW(Phdr) phdr;
@@ -150,7 +151,7 @@ long	get_base_addr(FILE *fd) {
 			break;
 		}
 	}
-	fseek(fd, 0, SEEK_SET); //offset to the beggining of the file
+	fseek(fd, 0, SEEK_SET); 
 	return phdr.p_vaddr;
 }
 /*
@@ -162,8 +163,16 @@ char pre payload [ ] = {
 };
 */
 
-unsigned char payload[] = 
-"\x50\x51\x52\x53\x48\xc7\xc0\x30\x31\x00\x00\x5b\x5a\x59\xff\xe0"; //push regs; jmp; pop regs
+/*
+unsigned char payload[] = "\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e"
+"\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x2e\x2e\x2e"
+"\x2e\x57\x4f\x4f\x44\x59\x2e\x2e\x2e\x2e\x0a\x48\x31\xc0\x48"
+"\x31\xff\x48\x31\xd2\x48\x31\xf6";
+*/
+
+char payload[] = "\xe9\xde\xad\xbe\xef";
+
+//"\x50\x51\x52\x53\x48\xc7\xc0\x30\x31\x00\x00\x5b\x5a\x59\xff\xe0"; //push regs; jmp; pop regs
 
 int main(int ac, char **av) {
 
@@ -172,46 +181,37 @@ int main(int ac, char **av) {
 	ssize_t		cave; 
 	ssize_t		fsize;
 	ssize_t		csize;
+	int		jmp_addr;
 	char *file = open_file(av[1], &fsize);
 	FILE *fd = fopen(av[1], "r+b");
-	size_t payload_size = 100;//strlen(payload);
+	size_t payload_size = sizeof(payload);
 
         fread(&ehdr, 1, sizeof(ehdr), fd);
-	long base = get_base_addr(fd);
+	long base = get_vaddr(fd);
 
-	if ((cave = find_cave(file, fsize, payload_size + base + JMP_BACK, &csize)) == 0) {
+	if ((cave = find_cave(file, fsize, payload_size + JMP_BACK, &csize)) == 0) {
 		dprintf(2, "Cave is too small to handle payload\n");
+		fclose(fd);
+		exit(1);
 	}
 
-	printf("Found cave at: 0x%lx; With the size of: %d \n", cave, csize);
+	printf("Found cave at: 0x%lx; With the size of: %d ; Payload size: %d\n", cave + base, csize, payload_size);
         fseek(fd, cave, SEEK_SET);
-        fwrite(payload, sizeof(char *), strlen(payload), fd);
+        //fwrite(payload, sizeof(char *), strlen(payload), fd);
 	//rewrite_entry(av[1],cave,&ehdr);
 
-	fclose(fd);
+//	fclose(fd);
 
 	int f = open(av[1], O_RDWR);
 	read(f, &ehdr, sizeof(ehdr));
         ElfW(Addr) og_entry = ehdr.e_entry;
-	ehdr.e_entry = cave;
+	ehdr.e_entry = cave + base;
         lseek(f, 0, SEEK_SET);
         write(f, &ehdr, sizeof(ehdr));
-/*
-	char mov_jmp[] = {0x48, 0xc7, 0xc0, 0x00, 0x04, 0x40, 0x00}; //mov rax, og_entry; pop rdx;jmp rax; 0xc0 means "RAX is first operand"
-    	mov_jmp[0] = 0x48; //REX.W
-    	mov_jmp[1] = 0xc7; //mov
-    	mov_jmp[2] = 0xc0; //rax
-    	mov_jmp[3] = og_entry;
-    	og_entry >>= 8;
-    	mov_jmp[4] = og_entry;
-    	og_entry >>= 8;
-    	mov_jmp[5] = og_entry;
-    	og_entry >>= 8;
-    	mov_jmp[6] = og_entry;
-    	write(f, &mov_jmp, 7);
-
-    	char jmp[] = {0xff, 0xe0};
-    	write(f, &jmp, 2);
-	*/
+	jmp_addr = (og_entry - (cave + 5)); // - instruction size AND payload size
+	memcpy(payload + 1, &jmp_addr, sizeof(jmp_addr));
+        
+	fwrite(payload, sizeof(char *), strlen(payload), fd);
+	fclose(fd);
 	close(f);
 }	
