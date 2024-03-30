@@ -7,8 +7,8 @@ main:
 print:
 	mov rax, 0x1 ; sysscall write
 	mov rdi, 0x1 ; stdout
-	pop rsi ; cette instruction n'utilise pas de null-byte non plus ! :)
-	mov rdx, 0xe ; 13 length of woody
+	pop rsi 
+	mov rdx, 0xe ; 13 length 
 	syscall
 	jmp end
 

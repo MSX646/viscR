@@ -70,6 +70,7 @@ ssize_t get_cave_size(char *file, ssize_t off, ssize_t fsize) {
 	return i;
 }
 
+//REMADE AS FOLLOWS ehdr->e_entry = phdr[TEXT].p_vaddr + phdr[TEXT].p_filesz
 ssize_t find_cave(char *file, ssize_t fsize, ssize_t payload_len, ssize_t *cave_size) {
 
 	ssize_t i;
