@@ -1,5 +1,5 @@
 # About
-ELF file packer
+ELF file packer with encryption
 Saves original binary execution flow
 The flow:
 1. Compress a whole file
@@ -20,7 +20,7 @@ Example:
 ```
 
 # Todo
-+ Make section less "suspicious"
++ Make section less "suspicious" and hide keys better
 + PE, Mach-O support - Why Not
 + Packed blob encoding/ubfuscation/encryption
 + ughhhhh
