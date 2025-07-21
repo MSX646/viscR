@@ -1,3 +1,8 @@
-main.c
-test.c
+.vscode/
+viscR.py
+requirements.txt
+zstd-test.c.bak2
+stub.c.bak
+craft_shell.sh
 print.s
+main.c
