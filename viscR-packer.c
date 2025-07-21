@@ -259,7 +259,6 @@ int main(int ac, char **av, char **env) {
 
     if (ac == 1) {
         printf("%s <binary to pack>\n", av[0]);
-        printf("Run %s_protected\n");
         return 1;
     }
 
