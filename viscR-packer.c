@@ -67,35 +67,6 @@ unsigned char *compress_blob(unsigned char *file, ssize_t size, ssize_t *compres
     return compressed;
 }
 
-void decompress_blob(unsigned char *compressed, ssize_t compressed_size, int memfd, char **env, char **av) {
-    ZSTD_DStream *dstream = ZSTD_createDStream();
-    ZSTD_initDStream(dstream);
-
-    unsigned char *output_buffer = malloc(16384);
-    if (!output_buffer) {
-        ZSTD_freeDStream(dstream);
-        return;
-    }
-
-    ZSTD_inBuffer input = {compressed, compressed_size, 0};
-    ZSTD_outBuffer output = {output_buffer, 16384, 0};
-
-    while (input.pos < input.size) {
-        size_t result = ZSTD_decompressStream(dstream, &output, &input);
-        if (ZSTD_isError(result)) {
-            printf("Decompression error: %s\n", ZSTD_getErrorName(result));
-            break;
-        }
-        
-        write(memfd, output_buffer, output.pos);
-        output.pos = 0;
-    }
-
-    ZSTD_freeDStream(dstream);
-    free(output_buffer);
-    execveat(memfd, "", av, env, AT_EMPTY_PATH);
-}
-
 char *open_file(char *av, ssize_t *size) {
     struct stat fdata;
     int fd;
